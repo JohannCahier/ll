@@ -46,6 +46,11 @@ typedef struct ll ll_t;
 // linked list node
 typedef struct ll_node ll_node_t;
 
+typedef enum {
+    INVALID = 0,
+    VALID = 1,
+} valid_flag_t;
+
 // linked list
 struct ll {
     // running length
@@ -63,6 +68,9 @@ struct ll {
 
     // a function that can print the values in a linked list
     gen_fun_t val_printer;
+
+    // a flag that says if the list is valid
+    valid_flag_t valid_flag;
 };
 
 /* function prototypes */
@@ -72,8 +80,13 @@ struct ll {
 // a pointer to the value when it is being deleted.
 ll_t *ll_new(gen_fun_t val_teardown);
 
-// traverses the linked list, deallocated everything (including `list`)
+// traverses the linked list, deallocating everything (including `list`)
 void ll_delete(ll_t *list);
+
+// traverses the linked list, deallocating everything (excluding `list`).
+// list in marked as 'invalid' (no futher operation on the list will succeed)
+// Once all thread are canceled/joint
+void ll_clear(ll_t *list);
 
 // inserts a value into the linked list at position `n`. acceptable values for n are `0`
 // (puts it in first) to `list->len` (puts it in last).

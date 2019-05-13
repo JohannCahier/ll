@@ -45,6 +45,16 @@
                            : pthread_rwlock_wrlock(&(lk))
 #define RWUNLOCK(lk) pthread_rwlock_unlock(&(lk));
 
+
+// shorthand for checking list validity
+#define CHECK_VALID(list, retval) {\
+                           valid_flag_t flag;\
+                           RWLOCK(l_read, list->m);\
+                           flag = list->valid_flag;\
+                           RWUNLOCK(list->m);\
+                           if(flag != VALID) {return retval;}\
+                    } while(0);
+
 /* type definitions */
 
 typedef enum locktype locktype_t;
@@ -82,23 +92,28 @@ ll_t *ll_new(gen_fun_t val_teardown) {
     list->hd = NULL;
     list->len = 0;
     list->val_teardown = val_teardown;
+    list->valid_flag = VALID;
     pthread_rwlock_init(&list->m, NULL);
 
     return list;
 }
 
+
 /**
- * @function ll_delete
+ * @function ll_clear
  *
- * Traversesthe whole linked list and deletes/deallocates the nodes then frees the linked
- * list itself.
+ * Traverses the whole linked list and deletes/deallocates the nodes.
+ * Invalidates the list (no further operation, other than ll_delete, won't succeed).
  *
  * @param list - the linked list
  */
-void ll_delete(ll_t *list) {
+void ll_clear(ll_t *list) {
+    CHECK_VALID(list, );
+
     ll_node_t *node = list->hd;
     ll_node_t *tmp;
     RWLOCK(l_write, list->m);
+
     while (node != NULL) {
         RWLOCK(l_write, node->m);
         list->val_teardown(node->val);
@@ -112,7 +127,21 @@ void ll_delete(ll_t *list) {
     list->hd = NULL;
     list->val_teardown = NULL;
     list->val_printer = NULL;
+    list->valid_flag = INVALID;
     RWUNLOCK(list->m);
+}
+
+/**
+ * @function ll_delete
+ *
+ * Calls ll_clear() to deallocates the nodes then frees the linked list itself.
+ *
+ * @param list - the linked list
+ */
+void ll_delete(ll_t *list) {
+    if(list->valid_flag != INVALID) {
+        ll_clear(list);
+    }
 
     pthread_rwlock_destroy(&(list->m));
 
@@ -150,6 +179,8 @@ ll_node_t *ll_new_node(void *val) {
  * @returns 0 if successful, -1 otherwise
  */
 int ll_select_n_min_1(ll_t *list, ll_node_t **node, int n, locktype_t lt) {
+    CHECK_VALID(list, -1);
+
     if (n < 0) // don't check against list->len because threads can add length
         return -1;
 
@@ -192,6 +223,8 @@ int ll_select_n_min_1(ll_t *list, ll_node_t **node, int n, locktype_t lt) {
  * @returns 0 if successful, -1 otherwise
  */
 int ll_insert_n(ll_t *list, void *val, int n) {
+    CHECK_VALID(list, -1);
+
     ll_node_t *new_node = ll_new_node(val);
 
     if (n == 0) { // nth_node is list->hd
@@ -256,6 +289,8 @@ int ll_insert_last(ll_t *list, void *val) {
  * @returns the new length of thew linked list on success, -1 otherwise
  */
 int ll_remove_n(ll_t *list, int n) {
+    CHECK_VALID(list, -1);
+
     ll_node_t *tmp;
     if (n == 0) {
         RWLOCK(l_write, list->m);
@@ -306,6 +341,8 @@ int ll_remove_first(ll_t *list) {
  * @returns the new length of thew linked list on success, -1 otherwise
  */
 int ll_remove_search(ll_t *list, int cond(void *)) {
+    CHECK_VALID(list, -1);
+
     ll_node_t *last = NULL;
     ll_node_t *node = list->hd;
     while ((node != NULL) && !(cond(node->val))) {
@@ -346,7 +383,9 @@ int ll_remove_search(ll_t *list, int cond(void *)) {
  * @returns the `val` attribute of the nth element of `list`.
  */
 void *ll_get_n(ll_t *list, int n) {
-    ll_node_t *node;
+    CHECK_VALID(list, NULL);
+
+    ll_node_t *node = NULL;
     if (ll_select_n_min_1(list, &node, n + 1, l_read))
         return NULL;
 
@@ -376,6 +415,8 @@ void *ll_get_first(ll_t *list) {
  * @param f - the function to call on the values.
  */
 void ll_map(ll_t *list, gen_fun_t f) {
+    CHECK_VALID(list, );
+
     ll_node_t *node = list->hd;
 
     while (node != NULL) {
@@ -396,6 +437,8 @@ void ll_map(ll_t *list, gen_fun_t f) {
  * @param list - the linked list
  */
 void ll_print(ll_t list) {
+    CHECK_VALID((&list), );
+
     if (list.val_printer == NULL)
         return;
 
@@ -526,6 +569,12 @@ int main() {
     ll_remove_search(list, num_equals_3); // (ll: 1 5 6 3),     length: 4
     ll_remove_search(list, num_equals_3); // (ll: 1 5 6),       length: 3
 
+    fprintf(stderr, "Clear list\n");
+    ll_clear(list);
+    // following operation should have no effect (list is INVALID)
+    ll_insert_last(list, &h);
+    ll_insert_last(list, &i);
+    ll_remove_first(list);
     ll_print(*list);
 
     ll_delete(list);
