@@ -113,19 +113,18 @@ ll_t *ll_new(gen_fun_t val_teardown) {
  * @param list - the linked list
  */
 void ll_clear(ll_t *list) {
-    ll_node_t *tmp;
-
     CHECK_VALID(list, l_write, );
     ll_node_t *node = list->hd;
+    ll_node_t *next = node;
 
-    while (node != NULL) {
+    while (next != NULL) {
+        node = next;
         RWLOCK(node, l_write);
         list->val_teardown(node->val);
-        tmp = node;
-        node = node->nxt;
-        RWUNLOCK(tmp);
-        pthread_rwlock_destroy(&(tmp->m));
-        free(tmp);
+        next = node->nxt;
+        RWUNLOCK(node);
+        pthread_rwlock_destroy(&(node->m));
+        free(node);
         (list->len)--;
     }
     assert(list->len == 0);
@@ -315,7 +314,7 @@ int ll_remove_n(ll_t *list, int n) {
     list->val_teardown(tmp->val);
 
     RWUNLOCK(list);
-
+    pthread_rwlock_destroy(&(tmp->m));
     free(tmp);
 
     return list->len;
@@ -333,6 +332,34 @@ int ll_remove_n(ll_t *list, int n) {
 int ll_remove_first(ll_t *list) {
     return ll_remove_n(list, 0);
 }
+
+/**
+ * @function ll_pop_first
+ *
+ * returns a pointer to data of the first node and removes it.
+ * NOTE : the caller takes the owner ship of the pointer
+ *        (and thus, needs to call the teardown function on it)
+ *
+ * @param list - the linked list
+ *
+ * @returns pointer to data or NULL
+ */
+void *ll_pop_first(ll_t *list) {
+    void *data = NULL;
+
+    CHECK_VALID(list, l_write, NULL);
+    ll_node_t *node = list->hd;
+    if (node != NULL) {
+        data = node->val;
+        list->hd = node->nxt;
+        pthread_rwlock_destroy(&(node->m));
+        free(node);
+    }
+    RWUNLOCK(list);
+
+    return data;
+}
+
 
 /**
  * @function ll_remove_search
@@ -366,6 +393,7 @@ int ll_remove_search(ll_t *list, int cond(void *)) {
     }
 
     list->val_teardown(node->val);
+    pthread_rwlock_destroy(&(node->m));
     (list->len)--;
     RWUNLOCK(list);
 
@@ -536,6 +564,7 @@ int ll_remove_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
     }
 
     list->val_teardown(node->val);
+    pthread_rwlock_destroy(&(node->m));
     free(node);
     (list->len)--;
     new_len = list->len;

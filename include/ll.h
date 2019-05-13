@@ -125,6 +125,11 @@ void *ll_get_n(ll_t *list, int n);
 // `NULL` if empty
 void *ll_get_first(ll_t *list);
 
+// returns a pointer to the first value in a linked list, and remove it.
+// `NULL` if empty
+void *ll_pop_first(ll_t *list);
+
+
 // runs f on all values of list
 void ll_map(ll_t *list, gen_fun_t f);
 
