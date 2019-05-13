@@ -458,6 +458,87 @@ void ll_no_teardown(void *n) {
     n += 0; // compiler won't let me just return
 }
 
+
+/**
+ * @function ll_find
+ *
+ * Generically searches for the first node that matches a reference value.
+ *
+ * @param list - the linked list
+ * @param comparator - a function that will be called on the values of each node. It should
+ * return 0 when the element matches the reference value.
+ * @param ref_value - reference value passed to the comparator
+ *
+ * @returns index of the first matching node on success, -1 otherwise
+ */
+int ll_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
+    CHECK_VALID(list, -1);
+
+    int count = 0;
+    ll_node_t *node = list->hd;
+    while ((node != NULL) && (comparator(node->val, ref_value) != 0)) {
+        node = node->nxt;
+        count++;
+    }
+
+    if (node == NULL) {
+        return -1;
+    }
+
+    return count;
+}
+
+
+/**
+ * @function ll_remove_find
+ *
+ * More generic replacement for ll_remove_search().
+ *
+ * @param list - the linked list
+ * @param comparator - see ll_find() for details on comparator
+ * @param ref_value - reference value passed to the comparator
+ *
+ * @returns the new length of thew linked list on success, -1 otherwise
+ */
+int ll_remove_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
+    CHECK_VALID(list, -1);
+
+    int new_len = -1;
+    ll_node_t *last = NULL;
+    ll_node_t *node = list->hd;
+    while ((node != NULL) && (comparator(node->val, ref_value) != 0)) {
+        last = node;
+        node = node->nxt;
+    }
+
+    if (node == NULL) {
+        return -1;
+    } else if (node == list->hd) {
+        RWLOCK(l_write, list->m);
+        list->hd = node->nxt;
+        RWUNLOCK(list->m);
+    } else {
+        RWLOCK(l_write, last->m);
+        last->nxt = node->nxt;
+        RWUNLOCK(last->m);
+    }
+
+    list->val_teardown(node->val);
+    free(node);
+
+    RWLOCK(l_write, list->m);
+    (list->len)--;
+    new_len = list->len; // avoid potential read race condition
+    RWUNLOCK(list->m);
+
+    return new_len;
+}
+
+
+
+
+
+
 #ifdef LL
 /* this following code is just for testing this library */
 
@@ -471,6 +552,10 @@ void num_printer(void *n) {
 
 int num_equals_3(void *n) {
     return *(int *)n == 3;
+}
+
+int num_equals(void *n, void *ref) {
+    return *(int *)n - *(int *)ref;
 }
 
 int main() {
@@ -568,6 +653,12 @@ int main() {
     ll_insert_last(list, &i);             // (ll: 3 1 5 6 3),   length: 5
     ll_remove_search(list, num_equals_3); // (ll: 1 5 6 3),     length: 4
     ll_remove_search(list, num_equals_3); // (ll: 1 5 6),       length: 3
+
+    fprintf(stderr, "Get position of value 5: %d\n", ll_find(list, num_equals, &f));
+
+    ll_remove_find(list, num_equals, &f);  // (ll: 1 6),         length: 2
+
+    ll_print(*list);
 
     fprintf(stderr, "Clear list\n");
     ll_clear(list);
