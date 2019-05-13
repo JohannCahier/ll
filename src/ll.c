@@ -34,26 +34,31 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #include "ll.h"
 
 /* macros */
 
 // for locking and unlocking rwlocks along with `locktype_t`
-#define RWLOCK(lt, lk) ((lt) == l_read)                   \
-                           ? pthread_rwlock_rdlock(&(lk)) \
-                           : pthread_rwlock_wrlock(&(lk))
-#define RWUNLOCK(lk) pthread_rwlock_unlock(&(lk));
+#define RWLOCK(item, locktype) ((locktype) == l_read)          \
+                           ? pthread_rwlock_rdlock(&(item->m)) \
+                           : pthread_rwlock_wrlock(&(item->m))
+#define RWUNLOCK(item) pthread_rwlock_unlock(&(item->m));
 
 
-// shorthand for checking list validity
-#define CHECK_VALID(list, retval) {\
-                           valid_flag_t flag;\
-                           RWLOCK(l_read, list->m);\
-                           flag = list->valid_flag;\
-                           RWUNLOCK(list->m);\
-                           if(flag != VALID) {return retval;}\
-                    } while(0);
+// shorthand for locking a list mutex and checking list's validity
+// locktype: is the locktype_t wanted by the function that checks the list
+// list:     the list to be checked
+// retval:   is the value to be returned by the function that uses the macro,
+//           when the check fails
+#define CHECK_VALID(list, locktype, retval) {                \
+                           valid_flag_t flag;                \
+                           RWLOCK(list, locktype);           \
+                           flag = list->valid_flag;          \
+                           if(flag != VALID) {RWUNLOCK(list);\
+                                              return retval;}\
+                   } while(0);
 
 /* type definitions */
 
@@ -108,27 +113,29 @@ ll_t *ll_new(gen_fun_t val_teardown) {
  * @param list - the linked list
  */
 void ll_clear(ll_t *list) {
-    CHECK_VALID(list, );
-
-    ll_node_t *node = list->hd;
     ll_node_t *tmp;
-    RWLOCK(l_write, list->m);
+
+    CHECK_VALID(list, l_write, );
+    ll_node_t *node = list->hd;
 
     while (node != NULL) {
-        RWLOCK(l_write, node->m);
+        RWLOCK(node, l_write);
         list->val_teardown(node->val);
-        RWUNLOCK(node->m);
         tmp = node;
         node = node->nxt;
+        RWUNLOCK(tmp);
         pthread_rwlock_destroy(&(tmp->m));
         free(tmp);
         (list->len)--;
     }
+    assert(list->len == 0);
     list->hd = NULL;
     list->val_teardown = NULL;
     list->val_printer = NULL;
     list->valid_flag = INVALID;
-    RWUNLOCK(list->m);
+    RWUNLOCK(list);
+    pthread_rwlock_destroy(&(list->m));
+
 }
 
 /**
@@ -142,8 +149,6 @@ void ll_delete(ll_t *list) {
     if(list->valid_flag != INVALID) {
         ll_clear(list);
     }
-
-    pthread_rwlock_destroy(&(list->m));
 
     free(list);
 }
@@ -179,8 +184,6 @@ ll_node_t *ll_new_node(void *val) {
  * @returns 0 if successful, -1 otherwise
  */
 int ll_select_n_min_1(ll_t *list, ll_node_t **node, int n, locktype_t lt) {
-    CHECK_VALID(list, -1);
-
     if (n < 0) // don't check against list->len because threads can add length
         return -1;
 
@@ -188,25 +191,29 @@ int ll_select_n_min_1(ll_t *list, ll_node_t **node, int n, locktype_t lt) {
         return 0;
 
     // n > 0
-
+    CHECK_VALID(list, lt, -1);
     *node = list->hd;
-    if (*node == NULL) // if head is NULL, but we're trying to go past it,
-        return -1;     // we have a problem
+    if (*node == NULL) { // list is empty
+        assert(list->len == 0);
+        RWUNLOCK(list);
+        return -1;
+    }
 
-    RWLOCK(lt, (*node)->m);
-
+    RWLOCK((*node), lt);
     ll_node_t *last;
     for (; n > 1; n--) {
         last = *node;
         *node = last->nxt;
         if (*node == NULL) { // happens when another thread deletes the end of a list
-            RWUNLOCK(last->m);
+            RWUNLOCK(last);
+            RWUNLOCK(list);
             return -1;
         }
 
-        RWLOCK(lt, (*node)->m);
-        RWUNLOCK(last->m);
+        RWLOCK((*node), lt);
+        RWUNLOCK(last);
     }
+    // RWUNLOCK(list->m); keep the list locked
 
     return 0;
 }
@@ -223,29 +230,26 @@ int ll_select_n_min_1(ll_t *list, ll_node_t **node, int n, locktype_t lt) {
  * @returns 0 if successful, -1 otherwise
  */
 int ll_insert_n(ll_t *list, void *val, int n) {
-    CHECK_VALID(list, -1);
-
     ll_node_t *new_node = ll_new_node(val);
 
     if (n == 0) { // nth_node is list->hd
-        RWLOCK(l_write, list->m);
+        CHECK_VALID(list, l_write, -1);
         new_node->nxt = list->hd;
         list->hd = new_node;
-        RWUNLOCK(list->m);
     } else {
         ll_node_t *nth_node;
+        // ll_select_n_min_1 checks and locks the list for us (on success)
         if (ll_select_n_min_1(list, &nth_node, n, l_write)) {
             free(new_node);
             return -1;
         }
         new_node->nxt = nth_node->nxt;
         nth_node->nxt = new_node;
-        RWUNLOCK(nth_node->m);
+        RWUNLOCK(nth_node);
     }
 
-    RWLOCK(l_write, list->m);
     (list->len)++;
-    RWUNLOCK(list->m);
+    RWUNLOCK(list);
 
     return list->len;
 }
@@ -289,28 +293,29 @@ int ll_insert_last(ll_t *list, void *val) {
  * @returns the new length of thew linked list on success, -1 otherwise
  */
 int ll_remove_n(ll_t *list, int n) {
-    CHECK_VALID(list, -1);
-
     ll_node_t *tmp;
     if (n == 0) {
-        RWLOCK(l_write, list->m);
+        CHECK_VALID(list, l_write, -1);
         tmp = list->hd;
         list->hd = tmp->nxt;
     } else {
         ll_node_t *nth_node;
-        if (ll_select_n_min_1(list, &nth_node, n, l_write)) // if that node doesn't exist
+        // ll_select_n_min_1 checks and locks the list for us (on success)
+        if (ll_select_n_min_1(list, &nth_node, n, l_write)) {
+            // that node index doesn't exist
             return -1;
+        }
 
         tmp = nth_node->nxt;
         nth_node->nxt = nth_node->nxt == NULL ? NULL : nth_node->nxt->nxt;
-        RWUNLOCK(nth_node->m);
-        RWLOCK(l_write, list->m);
+        RWUNLOCK(nth_node);
     }
 
     (list->len)--;
-    RWUNLOCK(list->m);
-
     list->val_teardown(tmp->val);
+
+    RWUNLOCK(list);
+
     free(tmp);
 
     return list->len;
@@ -341,7 +346,7 @@ int ll_remove_first(ll_t *list) {
  * @returns the new length of thew linked list on success, -1 otherwise
  */
 int ll_remove_search(ll_t *list, int cond(void *)) {
-    CHECK_VALID(list, -1);
+    CHECK_VALID(list, l_write, -1);
 
     ll_node_t *last = NULL;
     ll_node_t *node = list->hd;
@@ -353,21 +358,18 @@ int ll_remove_search(ll_t *list, int cond(void *)) {
     if (node == NULL) {
         return -1;
     } else if (node == list->hd) {
-        RWLOCK(l_write, list->m);
         list->hd = node->nxt;
-        RWUNLOCK(list->m);
     } else {
-        RWLOCK(l_write, last->m);
+        RWLOCK(last, l_write);
         last->nxt = node->nxt;
-        RWUNLOCK(last->m);
+        RWUNLOCK(last);
     }
 
     list->val_teardown(node->val);
-    free(node);
-
-    RWLOCK(l_write, list->m);
     (list->len)--;
-    RWUNLOCK(list->m);
+    RWUNLOCK(list);
+
+    free(node); // let's chat on IRC !
 
     return list->len;
 }
@@ -383,14 +385,16 @@ int ll_remove_search(ll_t *list, int cond(void *)) {
  * @returns the `val` attribute of the nth element of `list`.
  */
 void *ll_get_n(ll_t *list, int n) {
-    CHECK_VALID(list, NULL);
-
     ll_node_t *node = NULL;
-    if (ll_select_n_min_1(list, &node, n + 1, l_read))
+    void *val = NULL;
+    // ll_select_n_min_1 chacks and locks the list on our behalf
+    if (ll_select_n_min_1(list, &node, n + 1, l_read)) {
         return NULL;
-
-    RWUNLOCK(node->m);
-    return node->val;
+    }
+    val = node->val;
+    RWUNLOCK(node);
+    RWUNLOCK(list);
+    return val;
 }
 
 /**
@@ -406,6 +410,21 @@ void *ll_get_first(ll_t *list) {
     return ll_get_n(list, 0);
 }
 
+
+static void _ll_map_internal(ll_t *list, gen_fun_t f) {
+    ll_node_t *node = list->hd;
+
+    while (node != NULL) {
+        // f() may alterate values, so "lock write", just in case of...
+        RWLOCK(node, l_write);
+        ll_node_t *next = node->nxt;
+        f(node->val);
+        RWUNLOCK(node);
+
+        node = next;
+    }
+}
+
 /**
  * @function ll_map
  *
@@ -415,17 +434,11 @@ void *ll_get_first(ll_t *list) {
  * @param f - the function to call on the values.
  */
 void ll_map(ll_t *list, gen_fun_t f) {
-    CHECK_VALID(list, );
+    CHECK_VALID(list, l_read, );
 
-    ll_node_t *node = list->hd;
+    _ll_map_internal(list, f);
 
-    while (node != NULL) {
-        RWLOCK(l_read, node->m);
-        f(node->val);
-	ll_node_t *old_node = node;
-        node = node->nxt;
-        RWUNLOCK(old_node->m);
-    }
+    RWUNLOCK(list);
 }
 
 /**
@@ -437,14 +450,17 @@ void ll_map(ll_t *list, gen_fun_t f) {
  * @param list - the linked list
  */
 void ll_print(ll_t list) {
-    CHECK_VALID((&list), );
+    int len = -1;
 
-    if (list.val_printer == NULL)
-        return;
+    CHECK_VALID((&list), l_read, );
+    len = list.len;
 
-    printf("(ll:");
-    ll_map(&list, list.val_printer);
-    printf("), length: %d\n", list.len);
+    if (list.val_printer != NULL) {
+        printf("(ll:");
+        _ll_map_internal(&list, list.val_printer);
+        printf("), length: %d\n", len);
+    }
+    RWUNLOCK((&list));
 }
 
 /**
@@ -472,20 +488,17 @@ void ll_no_teardown(void *n) {
  * @returns index of the first matching node on success, -1 otherwise
  */
 int ll_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
-    CHECK_VALID(list, -1);
-
     int count = 0;
+
+    CHECK_VALID(list, l_read, -1);
     ll_node_t *node = list->hd;
     while ((node != NULL) && (comparator(node->val, ref_value) != 0)) {
         node = node->nxt;
         count++;
     }
+    RWUNLOCK(list);
 
-    if (node == NULL) {
-        return -1;
-    }
-
-    return count;
+    return (node == NULL)? -1 : count;
 }
 
 
@@ -501,11 +514,12 @@ int ll_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
  * @returns the new length of thew linked list on success, -1 otherwise
  */
 int ll_remove_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
-    CHECK_VALID(list, -1);
 
     int new_len = -1;
     ll_node_t *last = NULL;
+    CHECK_VALID(list, l_write, -1);
     ll_node_t *node = list->hd;
+
     while ((node != NULL) && (comparator(node->val, ref_value) != 0)) {
         last = node;
         node = node->nxt;
@@ -514,22 +528,18 @@ int ll_remove_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
     if (node == NULL) {
         return -1;
     } else if (node == list->hd) {
-        RWLOCK(l_write, list->m);
         list->hd = node->nxt;
-        RWUNLOCK(list->m);
     } else {
-        RWLOCK(l_write, last->m);
+        RWLOCK(last, l_write);
         last->nxt = node->nxt;
-        RWUNLOCK(last->m);
+        RWUNLOCK(last);
     }
 
     list->val_teardown(node->val);
     free(node);
-
-    RWLOCK(l_write, list->m);
     (list->len)--;
-    new_len = list->len; // avoid potential read race condition
-    RWUNLOCK(list->m);
+    new_len = list->len;
+    RWUNLOCK(list);
 
     return new_len;
 }
