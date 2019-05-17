@@ -152,6 +152,26 @@ void ll_delete(ll_t *list) {
     free(list);
 }
 
+
+/**
+ * @function ll_length
+ *
+ * get the number of items stored in the list
+ *
+ * @param list - the linked list
+ *
+ * @return list lengtth, or -1 if list is not valid.
+
+ */
+int ll_clear(ll_t *list) {
+    int len = -1;
+
+    CHECK_VALID(list, l_read, -1);
+    len = list->len;
+    RWUNLOCK(list);
+    return len;
+}
+
 /**
  * @function ll_new_node
  *

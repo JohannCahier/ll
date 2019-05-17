@@ -41,7 +41,7 @@
 typedef void (*gen_fun_t)(void *);
 
 // comparator : implementation should return "true" (0) if both values are considered as equal.
-typedef int (*comp_fun_t)(void *, void *);
+typedef int (*comp_fun_t)(const void *, const void *);
 
 // linked list
 typedef struct ll ll_t;
@@ -90,6 +90,11 @@ void ll_delete(ll_t *list);
 // list in marked as 'invalid' (no futher operation on the list will succeed)
 // Once all thread are canceled/joint
 void ll_clear(ll_t *list);
+
+
+// return list len (with a lock read),
+// or -1 if list is invalid.
+int ll_length(ll_t *list);
 
 // inserts a value into the linked list at position `n`. acceptable values for n are `0`
 // (puts it in first) to `list->len` (puts it in last).
@@ -144,12 +149,12 @@ void ll_no_teardown(void *n);
 // comparator callback is used to check the node's value matches or not the given ref_value.
 // NOTE : comparator should return 0 on matches (any other value on mismatch).
 // returns the ordinal position of the first node that "matches" the given value, -1 otherwise
-int ll_find(ll_t *list, comp_fun_t comparator, void *ref_value);
+int ll_find(ll_t *list, comp_fun_t comparator, const void *ref_value);
 
 // More generic replacement for ll_remove_search().
 // Use comparator callback to check matches just like ll_find()
 // Returns the new length of the linked list if successful, -1 otherwise
-int ll_remove_find(ll_t *list, comp_fun_t comparator, void *ref_value);
+int ll_remove_find(ll_t *list, comp_fun_t comparator, const void *ref_value);
 
 // LL_H
 #endif
