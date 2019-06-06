@@ -163,7 +163,7 @@ void ll_delete(ll_t *list) {
  * @return list lengtth, or -1 if list is not valid.
 
  */
-int ll_clear(ll_t *list) {
+int ll_length(ll_t *list) {
     int len = -1;
 
     CHECK_VALID(list, l_read, -1);
