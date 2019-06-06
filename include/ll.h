@@ -148,8 +148,8 @@ void ll_no_teardown(void *n);
 // Generically searches for the first node that matches a reference value.
 // comparator callback is used to check the node's value matches or not the given ref_value.
 // NOTE : comparator should return 0 on matches (any other value on mismatch).
-// returns the ordinal position of the first node that "matches" the given value, -1 otherwise
-int ll_find(ll_t *list, comp_fun_t comparator, const void *ref_value);
+// returns a pointer to the value of first node that "matches" the given value, NULL otherwise
+void* ll_find(ll_t *list, comp_fun_t comparator, const void *ref_value);
 
 // More generic replacement for ll_remove_search().
 // Use comparator callback to check matches just like ll_find()

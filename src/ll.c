@@ -529,24 +529,23 @@ void ll_no_teardown(void *n) {
  * Generically searches for the first node that matches a reference value.
  *
  * @param list - the linked list
- * @param comparator - a function that will be called on the values of each node. It should
- * return 0 when the element matches the reference value.
+ * @param comparator - a function that will be called on the values of each node. (It should return 0 when the element matches the reference value)
  * @param ref_value - reference value passed to the comparator
  *
- * @returns index of the first matching node on success, -1 otherwise
+ * @returns pointer to value of the first matching node on success, NULL otherwise
  */
-int ll_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
-    int count = 0;
+void* ll_find(ll_t *list, comp_fun_t comparator, const void *ref_value) {
+//     int count = 0;
 
-    CHECK_VALID(list, l_read, -1);
+    CHECK_VALID(list, l_read, NULL);
     ll_node_t *node = list->hd;
     while ((node != NULL) && (comparator(node->val, ref_value) != 0)) {
         node = node->nxt;
-        count++;
+//         count++;
     }
     RWUNLOCK(list);
 
-    return (node == NULL)? -1 : count;
+    return (node == NULL)? NULL : node->val;
 }
 
 
