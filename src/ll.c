@@ -371,6 +371,7 @@ void *ll_pop_first(ll_t *list) {
     ll_node_t *node = list->hd;
     if (node != NULL) {
         data = node->val;
+        list->len--;
         list->hd = node->nxt;
         pthread_rwlock_destroy(&(node->m));
         free(node);
@@ -560,7 +561,7 @@ void* ll_find(ll_t *list, comp_fun_t comparator, const void *ref_value) {
  *
  * @returns the new length of thew linked list on success, -1 otherwise
  */
-int ll_remove_find(ll_t *list, comp_fun_t comparator, void *ref_value) {
+int ll_remove_find(ll_t *list, comp_fun_t comparator, const void *ref_value) {
 
     int new_len = -1;
     ll_node_t *last = NULL;
@@ -612,8 +613,8 @@ int num_equals_3(void *n) {
     return *(int *)n == 3;
 }
 
-int num_equals(void *n, void *ref) {
-    return *(int *)n - *(int *)ref;
+int num_equals(const void *n, const void *ref) {
+    return *(const int *)n - *(const int *)ref;
 }
 
 int main() {
@@ -712,7 +713,9 @@ int main() {
     ll_remove_search(list, num_equals_3); // (ll: 1 5 6 3),     length: 4
     ll_remove_search(list, num_equals_3); // (ll: 1 5 6),       length: 3
 
-    fprintf(stderr, "Get position of value 5: %d\n", ll_find(list, num_equals, &f));
+    int dummy_value = 42;
+    fprintf(stderr, "Get position of value 5: %p\n", ll_find(list, num_equals, &f));
+    fprintf(stderr, "Get position of value 42: %p\n", ll_find(list, num_equals, &dummy_value));
 
     ll_remove_find(list, num_equals, &f);  // (ll: 1 6),         length: 2
 
